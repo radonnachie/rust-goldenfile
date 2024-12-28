@@ -12,6 +12,21 @@ use yansi::Paint;
 
 use crate::differs::*;
 
+/// The location of the goldenfile.
+///
+/// This supports the "moved goldenfile" scenario,
+/// where the goldenfile is moved to the 'temporary'
+/// directory and an exact replication is expected
+/// at its 'original' path by the end of the test.
+enum GoldenfileLocation {
+    /// The goldenfile is in its original location with the
+    /// replication expected in the temporary directory.
+    Original,
+    /// The goldenfile is moved to the temporary directory with the
+    /// replication expected at the original path.
+    Temporary,
+}
+
 /// A Mint creates goldenfiles.
 ///
 /// When a Mint goes out of scope, it will do one of two things depending on the
@@ -24,7 +39,7 @@ use crate::differs::*;
 pub struct Mint {
     path: PathBuf,
     tempdir: TempDir,
-    files: Vec<(PathBuf, Differ)>,
+    files: Vec<(PathBuf, Differ, GoldenfileLocation)>,
     create_empty: bool,
 }
 
@@ -96,9 +111,14 @@ impl Mint {
     /// Called automatically when a Mint goes out of scope and
     /// `UPDATE_GOLDENFILES!=1`.
     pub fn check_goldenfiles(&self) {
-        for (file, differ) in &self.files {
-            let old = self.path.join(file);
-            let new = self.tempdir.path().join(file);
+        for (file, differ, relation) in &self.files {
+            let orig = self.path.join(file);
+            let temp = self.tempdir.path().join(file);
+            let (golden, new) = match relation {
+                GoldenfileLocation::Original => (orig, temp),
+                GoldenfileLocation::Temporary => (temp, orig),
+            };
+
             defer_on_unwind! {
                 eprintln!("note: run with `UPDATE_GOLDENFILES=1` to update goldenfiles");
                 eprintln!(
@@ -106,8 +126,17 @@ impl Mint {
                     "error".bold().red(),
                     file.to_str().unwrap()
                 );
+
+                if let GoldenfileLocation::Temporary = relation {
+                    Self::overwrite_file(
+                        &new,
+                        &golden,
+                        self.create_empty,
+                        file.to_str().unwrap()
+                    );
+                }
             }
-            differ(&old, &new);
+            differ(&golden, &new);
         }
     }
 
@@ -116,20 +145,64 @@ impl Mint {
     /// Called automatically when a Mint goes out of scope and
     /// `UPDATE_GOLDENFILES=1`.
     pub fn update_goldenfiles(&self) {
-        for (file, _) in &self.files {
-            let old = self.path.join(file);
-            let new = self.tempdir.path().join(file);
+        for (file, _, relation) in &self.files {
+            let orig = self.path.join(file);
+            let temp = self.tempdir.path().join(file);
+            let (golden, new) = match relation {
+                GoldenfileLocation::Original => (orig, temp),
+                GoldenfileLocation::Temporary => (temp, orig),
+            };
 
-            let empty = File::open(&new).unwrap().metadata().unwrap().len() == 0;
-            if self.create_empty || !empty {
-                println!("Updating {:?}.", file.to_str().unwrap());
-                fs::copy(&new, &old).unwrap_or_else(|err| {
-                    panic!("Error copying {:?} to {:?}: {:?}", &new, &old, err)
-                });
-            } else if old.exists() {
-                std::fs::remove_file(&old).unwrap();
-            }
+            Self::overwrite_file(
+                &golden,
+                &new,
+                self.create_empty,
+                file.to_str().unwrap()
+            );
         }
+    }
+
+    fn overwrite_file(dest: &PathBuf, source: &PathBuf, create_empty: bool, file: &str) {
+        let empty = File::open(&source).unwrap().metadata().unwrap().len() == 0;
+        if create_empty || !empty {
+            println!("Updating {}.", file);
+            fs::copy(&source, &dest).unwrap_or_else(|err| {
+                panic!("Error copying {:?} to {:?}: {:?}", &source, &dest, err)
+            });
+        } else if dest.exists() {
+            std::fs::remove_file(&dest).unwrap();
+        }
+    }
+
+    /// Move goldenfile, expect exact replacement with a diff function infered
+    /// from the file extension.
+    ///
+    /// The moved file is registered and the goldenfile is expected to be fully
+    /// reconstituted by the end of the test. The returned PathBuf references
+    /// the original (now missing) goldenfile.
+    pub fn move_goldenfile<P: AsRef<Path>>(&mut self, path: P) -> Result<PathBuf> {
+        self.move_goldenfile_with_differ(&path, get_differ_for_path(&path))
+    }
+
+    /// Move goldenfile, expect exact replacement with the specified diff function.
+    ///
+    /// The moved file is registered and the goldenfile is expected to be fully
+    /// reconstituted by the end of the test. The returned PathBuf references
+    /// the original (now missing) goldenfile.
+    pub fn move_goldenfile_with_differ<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        differ: Differ,
+    ) -> Result<PathBuf> {
+        let gold = self.path.join(&path);
+        let temp = self.register_goldenfile_with_differ_and_relation(
+            &path,
+            differ,
+            GoldenfileLocation::Temporary,
+        )?;
+        fs::copy(&gold, &temp)?;
+        fs::remove_file(&gold)?;
+        Ok(gold)
     }
 
     /// Register a new goldenfile using a differ inferred from the file extension.
@@ -147,6 +220,22 @@ impl Mint {
         path: P,
         differ: Differ,
     ) -> Result<PathBuf> {
+        self.register_goldenfile_with_differ_and_relation(
+            &path,
+            differ,
+            GoldenfileLocation::Original,
+        )
+    }
+
+    /// Register a new goldenfile with the specified diff function and GoldenfileLocation.
+    ///
+    /// The returned PathBuf references a temporary file, not the goldenfile itself.
+    fn register_goldenfile_with_differ_and_relation<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        differ: Differ,
+        relation: GoldenfileLocation,
+    ) -> Result<PathBuf> {
         if !path.as_ref().is_relative() {
             return Err(Error::new(
                 ErrorKind::InvalidInput,
@@ -155,7 +244,8 @@ impl Mint {
         }
 
         let abs_path = self.tempdir.path().to_path_buf().join(path.as_ref());
-        self.files.push((path.as_ref().to_path_buf(), differ));
+        self.files
+            .push((path.as_ref().to_path_buf(), differ, relation));
         Ok(abs_path)
     }
 }

@@ -19,9 +19,28 @@ fn binary_match() {
 fn indirect_write() {
     let mut mint = Mint::new("tests/goldenfiles");
     let path = mint.register_goldenfile("match1.txt").unwrap();
-    let mut file1 = File::create(path).unwrap();
+    let mut file = File::create(path).unwrap();
 
-    writeln!(file1, "Hello world!").unwrap();
+    writeln!(file, "Hello world!").unwrap();
+}
+
+#[test]
+fn moved_replacement() {
+    let mut mint = Mint::new("tests/goldenfiles");
+    let path = mint.move_goldenfile("match1.txt").unwrap();
+    let mut file = File::create(path).unwrap();
+
+    writeln!(file, "Hello world!").unwrap();
+}
+
+#[test]
+#[should_panic(expected = "Hello world!")]
+fn moved_bad_replacement() {
+    let mut mint = Mint::new("tests/goldenfiles");
+    let path = mint.move_goldenfile("match1.txt").unwrap();
+    let mut file = File::create(path).unwrap();
+
+    writeln!(file, "Are you there world?").unwrap();
 }
 
 #[test]
