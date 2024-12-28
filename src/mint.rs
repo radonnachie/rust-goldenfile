@@ -200,8 +200,10 @@ impl Mint {
             differ,
             GoldenfileLocation::Temporary,
         )?;
-        fs::copy(&gold, &temp)?;
-        fs::remove_file(&gold)?;
+        if let true = gold.exists() {
+            fs::copy(&gold, &temp)?;
+            fs::remove_file(&gold)?;
+        }
         Ok(gold)
     }
 
