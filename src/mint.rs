@@ -146,12 +146,11 @@ impl Mint {
     /// `UPDATE_GOLDENFILES=1`.
     pub fn update_goldenfiles(&self) {
         for (file, _, relation) in &self.files {
-            let orig = self.path.join(file);
-            let temp = self.tempdir.path().join(file);
-            let (golden, new) = match relation {
-                GoldenfileLocation::Original => (orig, temp),
-                GoldenfileLocation::Temporary => (temp, orig),
-            };
+            if let GoldenfileLocation::Temporary = relation {
+                continue;
+            }
+            let golden = self.path.join(file);
+            let new = self.tempdir.path().join(file);
 
             Self::overwrite_file(
                 &golden,
@@ -201,8 +200,26 @@ impl Mint {
             GoldenfileLocation::Temporary,
         )?;
         if let true = gold.exists() {
-            fs::copy(&gold, &temp)?;
-            fs::remove_file(&gold)?;
+            fs::create_dir_all(temp.parent().unwrap())?;
+            if let Err(err) = fs::copy(&gold, &temp) {
+                return Err(Error::new(
+                    err.kind(),
+                    format!(
+                        "Error copying {:?} to {:?}",
+                        gold,
+                        temp
+                    )
+                ));
+            }
+            if let Err(err) = fs::remove_file(&gold) {
+                return Err(Error::new(
+                    err.kind(),
+                    format!(
+                        "Error removing {:?}",
+                        gold
+                    )
+                ));
+            }
         }
         Ok(gold)
     }
