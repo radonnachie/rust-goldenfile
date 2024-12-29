@@ -152,12 +152,7 @@ impl Mint {
             let golden = self.path.join(file);
             let new = self.tempdir.path().join(file);
 
-            Self::overwrite_file(
-                &golden,
-                &new,
-                self.create_empty,
-                file.to_str().unwrap()
-            );
+            Self::overwrite_file(&golden, &new, self.create_empty, file.to_str().unwrap());
         }
     }
 
@@ -204,21 +199,11 @@ impl Mint {
             if let Err(err) = fs::copy(&gold, &temp) {
                 return Err(Error::new(
                     err.kind(),
-                    format!(
-                        "Error copying {:?} to {:?}",
-                        gold,
-                        temp
-                    )
+                    format!("Error copying {:?} to {:?}", gold, temp),
                 ));
             }
             if let Err(err) = fs::remove_file(&gold) {
-                return Err(Error::new(
-                    err.kind(),
-                    format!(
-                        "Error removing {:?}",
-                        gold
-                    )
-                ));
+                return Err(Error::new(err.kind(), format!("Error removing {:?}", gold)));
             }
         }
         Ok(gold)
