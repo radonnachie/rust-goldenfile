@@ -27,7 +27,7 @@ fn indirect_write() {
 #[test]
 fn moved_replacement() {
     let mut mint = Mint::new("tests/goldenfiles");
-    let path = mint.move_goldenfile("match1.txt").unwrap();
+    let path = mint.move_goldenfile("move.txt").unwrap();
     let mut file = File::create(path).unwrap();
 
     writeln!(file, "Hello world!").unwrap();
@@ -37,7 +37,7 @@ fn moved_replacement() {
 #[should_panic(expected = "Hello world!")]
 fn moved_bad_replacement() {
     let mut mint = Mint::new("tests/goldenfiles");
-    let path = mint.move_goldenfile("match1.txt").unwrap();
+    let path = mint.move_goldenfile("move2.txt").unwrap();
     let mut file = File::create(path).unwrap();
 
     writeln!(file, "Are you there world?").unwrap();
